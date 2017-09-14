@@ -1,3 +1,6 @@
+// https://codeshare.frida.re/@lichao890427/dump_ios/
+// https://github.com/lichao890427/frida_script   analysis_hook.js  => submit issues
+
 var O_RDONLY = 0;
 var O_WRONLY = 1;
 var O_RDWR = 2;
@@ -161,29 +164,13 @@ NSSearchPathForDirectoriesInDomains = getExportFunction("f", "NSSearchPathForDir
 wrapper_open = getExportFunction("f", "open", "int", ["pointer", "int", "int"]);
 read = getExportFunction("f", "read", "int", ["int", "pointer", "int"]);
 write = getExportFunction("f", "write", "int", ["int", "pointer", "int"]);
-lseek = getExportFunction("f", "lseek", "int", ["int", "int", "int"]);
+lseek = getExportFunction("f", "lseek", "int64", ["int", "int64", "int"]);
 close = getExportFunction("f", "close", "int", ["int"]);
-fstat = getExportFunction("f", "fstat", "int", ["int", "pointer"]);
-
-function getCommandOutput(cmd) {
-    var fp = popen(cmd, "r");
-    if (fp.isNull()) {
-		console.log("popen return null");
-        return null;
-    }
-	var output = "";
-    var buffer = malloc(1024);
-    while (fgets(buffer, 1024, fp) > 0) {
-        output += getStr(buffer);
-    }
-    pclose(fp);
-    return output;
-}
 
 function getCacheDir() {
-	var NSDocumentDirectory = 9;
+	var NSCachesDirectory = 13;
 	var NSUserDomainMask = 1;
-	var npdirs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, 1);
+	var npdirs = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, 1);
 	return ObjC.Object(npdirs).objectAtIndex_(0).toString();
 }
 
@@ -192,11 +179,6 @@ function open(pathname, flags, mode) {
         pathname = allocStr(pathname);
     }
     return wrapper_open(pathname, flags, mode);
-}
-
-function getFileSize(fd) {
-	
-    return lseek(fd, 0, SEEK_END);
 }
 
 // Export function
@@ -223,6 +205,7 @@ var LC_SEGMENT_64 = 0x19;
 var LC_ENCRYPTION_INFO = 0x21;
 var LC_ENCRYPTION_INFO_64 = 0x2C;
 
+// You can dump .app or dylib (Encrypt/No Encrypt)
 function dumpModule(name) {
 	if (modules == null) {
 		modules = getAllAppModules();
@@ -244,13 +227,19 @@ function dumpModule(name) {
 	var newmodpath = getCacheDir() + "/" + newmodname;
 	var oldmodpath = modules[i].path;
 	
-	var fmodule = open(newmodpath, O_CREAT | O_RDWR, 0x85C0);
+	var fmodule = open(newmodpath, O_CREAT | O_RDWR, 0);
 	var foldmodule = open(oldmodpath, O_RDONLY, 0);
 	if (fmodule == -1 || foldmodule == -1) {
 		console.log("Cannot open file" + newmodpath);
 		return;
 	}
 
+	var BUFSIZE = 4096;
+	var buffer = malloc(BUFSIZE);
+	while (read(foldmodule, buffer, BUFSIZE)) {
+		write(fmodule, buffer, BUFSIZE);
+	}
+	
 	// Find crypt info and recover
 	var is64bit = false;
 	var size_of_mach_header = 0;
@@ -279,14 +268,7 @@ function dumpModule(name) {
 		}
 		off += cmdsize;
 	}
-	/*
-	if (offset_cryptoff != -1) {
-	var BUFSIZE = 4096;
-	var buffer = malloc(BUFSIZE);
-	while (read(foldmodule, buffer, BUFSIZE)) {
-		write(fmodule, buffer, BUFSIZE);
-	}
-	*/
+
 	if (offset_cryptoff != -1) {
 		var tpbuf = malloc(8);
 		console.log("Fix decrypted at:" + offset_cryptoff.toString(16));
@@ -294,12 +276,17 @@ function dumpModule(name) {
 		lseek(fmodule, offset_cryptoff, SEEK_SET);
 		write(fmodule, tpbuf, 8);
 		console.log("Fix decrypted at:" + crypt_off.toString(16));
-		var x = lseek(fmodule, crypt_off, SEEK_SET);
-		var y = write(fmodule, modbase.add(crypt_off), crypt_size);
-		console.log(x.toString(16), y.toString(16));
+		lseek(fmodule, crypt_off, SEEK_SET);
+		write(fmodule, modbase.add(crypt_off), crypt_size);
 	}
 	console.log("Decrypted file at:" + newmodpath + " 0x" + modsize.toString(16));
 	close(fmodule);
 	close(foldmodule);
 }	
 
+/*
+	Usage:   dumpModule("BWA.app");   dumpModule("aaa.dylib")
+	[iPhone::PID::20457]-> dumpModule(".app")
+	Fix decrypted at:ac0
+	Fix decrypted at:4000
+*/

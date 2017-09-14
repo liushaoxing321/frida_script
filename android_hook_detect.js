@@ -324,24 +324,6 @@ function getAllModules() { // Some modules may hide themselves in 'solist', so w
         var path = getStr(buffer.add(56));
 		var perm = getStr(buffer.add(16));
         if (path[0] != "/") {
-			if (perm[0] == 'r') {
-				try {
-					var signature = getU32(ptr(vmmin));
-					var type = "unknown";
-					if (signature != 0) {
-						if (signature == 1179403647) {
-							type = "elf";
-						}
-						else if (signature == 175727972) {
-							type = "odex";
-						}
-						else
-						console.log("hidden:" + vmmin.toString(16) + signature.toString(16)); 
-					}
-				}
-				catch (e) {
-				}
-			}
             continue;
         }
         // Check exist
